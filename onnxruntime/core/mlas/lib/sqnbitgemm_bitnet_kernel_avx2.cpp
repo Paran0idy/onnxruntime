@@ -64,8 +64,8 @@ Q2BitGemmPerGemmWorkspaceSize(
         case SQNBIT_CompInt8: {
             // workspace buffer is used for block quantization of A to int8
             const size_t BlockCountK = MlasDivRoundup(K, BlkLen);
-            // QuantData + Scale
-            const size_t PerGemmWorkspaceSize = M * BlockCountK * Q8BlkSize(BlkLen);
+            // QuantData + Scale + ZeroPoint but LUT format
+            const size_t PerGemmWorkspaceSize = M * BlockCountK * (Q8BlkLUTSize(BlkLen) + sizeof(float));
             return PerGemmWorkspaceSize;
         }
         default: {
@@ -103,4 +103,18 @@ QuantizeARow_CompInt8(
 )
 {
   // shall be similar to QuantizeARow_CompInt8_avx2 without blksum related code.
+}
+
+
+void
+QuantizeARowLUT_CompInt8(
+    size_t /*BlkLen*/,
+    const float* /*A*/,
+    size_t /*CountK*/,
+    std::byte* /*QuantA*/,
+    float* /*QunatAScale*/,
+    float* /*QunatAZeroPoint*/
+)
+{
+    
 }

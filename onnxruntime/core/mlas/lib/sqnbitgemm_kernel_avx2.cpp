@@ -1355,6 +1355,7 @@ const MLAS_QNBIT_GEMM_DISPATCH MlasSQNBitGemmDispatchAvx2 = []() {
 
     d.SQ2BitGemmKernel_CompInt8 = SQ2BitGemmKernel_CompInt8_avx2;
     d.QuantizeARow_CompInt8 = QuantizeARow_CompInt8;
+    d.QuantizeARowLUT_CompInt8 = QuantizeARowLUT_CompInt8
 
     return d;
 }();
@@ -1383,6 +1384,7 @@ const MLAS_QNBIT_GEMM_DISPATCH MlasSQNBitGemmDispatchAvx2vnni = []() {
 
     d.SQ2BitGemmKernel_CompInt8 = SQ2BitGemmKernel_CompInt8_avx2;
     d.QuantizeARow_CompInt8 = QuantizeARow_CompInt8;
+    d.QuantizeARowLUT_CompInt8 = QuantizeARowLUT_CompInt8;
 
     return d;
 }();

@@ -50,3 +50,12 @@ void QuantizeARow_CompInt8(
     size_t CountK,
     std::byte* QuantA
 );
+
+void QuantizeARowLUT_CompInt8(
+    size_t BlkLen,
+    const float* A,
+    size_t CountK,
+    std::byte* QuantA,
+    float* QunatAScale,
+    float* QunatAZeroPoint
+);

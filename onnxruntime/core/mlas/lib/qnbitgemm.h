@@ -368,9 +368,42 @@ struct MLAS_QNBIT_GEMM_DISPATCH {
         size_t CountK,
         std::byte* QuantA
     );
-
     QuantizeARow_CompInt8_Fn* QuantizeARow_CompInt8 = nullptr;
 
+    /**
+     * @brief Block quantize values from one row of matrix A from floats to quantized 8-bit integers.
+     *        Compute the scale and zero point values.
+     *
+     * @param       BlkLen              Number of values in a block.
+     * @param       A                   Supplies the A matrix.
+     * @param       CountK              Number of columns of A.
+     * @param[out]  QuantA              Supplies the output quantized A matrix.
+     *                                  Binary data containing block quantized int8 data and scale values.
+     * @param[out]  QuantAScale         Supplies the scale value for the quantized A matrix.
+     * @param[out]  QunatAZeroPoint     Supplies the zero point value for the quantized A matrix.
+     */
+    typedef void(QuantizeARowLUT_CompInt8_Fn)(
+        size_t BlkLen,
+        const float* A,
+        size_t CountK,
+        std::byte* QuantA,
+        float* QunatAScale,
+        float* QunatAZeroPoint
+    );
+    QuantizeARowLUT_CompInt8_Fn* QuantizeARowLUT_CompInt8 = nullptr;
+
+    /**
+     * @brief Block quantize values from one row of matrix A from floats to quantized 8-bit integers.
+     *        Compute the sum of the block.
+     *
+     * @param       BlkLen              Number of values in a block.
+     * @param       A                   Supplies the A matrix.
+     * @param       CountK              Number of columns of A.
+     * @param[out]  QuantA              Supplies the output quantized A matrix.
+     *                                  Binary data containing block quantized int8 data and scale values.
+     * @param[out]  QuantAScale         Supplies the scale value for the quantized A matrix.
+     * @param[out]  AScaledGroupSum     Supplies the sum of the block.
+     */
     typedef void(QuantizeARowComputeBlkSum_CompInt8_Fn)(
         size_t BlkLen,
         const float* A,

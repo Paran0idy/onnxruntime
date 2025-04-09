@@ -64,6 +64,18 @@ Q8BlkSize(size_t BlkLen)
 
 MLAS_FORCEINLINE
 constexpr size_t
+Q8BlkLUTSize(size_t BlkLen)
+{   
+    // group = 4, so we should store BlkLen * 2 ^ 4 int8.
+    const size_t BlkSize = sizeof(float) +  BlkLen * (2 << 4) * sizeof(int8_t);
+    // Ensure contiguous blocks are suitably aligned.
+    assert(BlkSize % alignof(float) == 0);
+    return BlkSize;
+}
+
+
+MLAS_FORCEINLINE
+constexpr size_t
 Q8BlkAlignment()
 {
     return alignof(float);

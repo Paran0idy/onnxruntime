@@ -104,7 +104,7 @@ MlasIsQNBitGemmAvailable(
               (Dispatch->SQ4BitGemmKernel_BlkSum_CompInt8 != nullptr && Dispatch->QuantizeARowComputeBlkSum_CompInt8 != nullptr);
         }
         case SQNBitGemmVariant_BitWidth2_CompInt8: {
-            return (Dispatch->SQ2BitGemmKernel_CompInt8 != nullptr && Dispatch->QuantizeARow_CompInt8 != nullptr);
+            return (Dispatch->SQ2BitGemmKernel_CompInt8 != nullptr && Dispatch->QuantizeARowLUT_CompInt8 != nullptr);
         }
         default: {
             return false;
@@ -718,15 +718,11 @@ InitializeWorkspace_CompInt8<float>(
 {
     MLAS_UNREFERENCED_PARAMETER(N);
 
-    const auto QuantizeARow = GetMlasPlatform().QNBitGemmDispatch->QuantizeARow_CompInt8;
-    // TODO: THIS is temporary: in case of BlkBitWidth == 2 we want to force use QuantizeARow even if
-    // QuantizeARowComputeBlkSum_CompInt8 is available.
-    const auto QuantizeARow2 = BlkBitWidth == 2 ? nullptr : GetMlasPlatform().QNBitGemmDispatch->QuantizeARowComputeBlkSum_CompInt8;
-
     const size_t BlockCountK = MlasDivRoundup(K, BlkLen);
     const size_t QuantAStride = BlockCountK * Q8BlkSize(BlkLen);
     // TODO: try parallel on BatchN * M threads because BatchN is usually 1.
-    if (QuantizeARow2) {
+    if (BlkBitWidth != 2) {
+        const auto QuantizeARow2 = GetMlasPlatform().QNBitGemmDispatch->QuantizeARowComputeBlkSum_CompInt8;
         MlasTrySimpleParallel(ThreadPool, BatchN, [&](ptrdiff_t gemm_idx) {
             const auto& data = DataParams[gemm_idx];
             const float* ARowPtr = data.A;
@@ -745,16 +741,28 @@ InitializeWorkspace_CompInt8<float>(
             }
         });
     } else {
-        MlasTrySimpleParallel(ThreadPool, BatchN, [&](ptrdiff_t gemm_idx) {
+        const auto QuantizeARow = GetMlasPlatform().QNBitGemmDispatch->QuantizeARowLUT_CompInt8;
+        size_t threadsCounts = min(std::thread::hardware_concurrency(), M);
+        MlasTrySimpleParallel(ThreadPool, BatchN * threadsCounts, [&](ptrdiff_t gemm_idx) {
+            size_t gemm_idx = gemm_idx / threadsCounts;
+            size_t row = gemm_idx % threadsCounts;
+
             const auto& data = DataParams[gemm_idx];
+            const float* ARowPtr = data.A + data.lda * row;
+            void* PerGemmWorkspace = static_cast<std::byte*>(Workspace) + gemm_idx * PerGemmWorkspaceStride;
+            PerGemmQuantAWorkspace quant_a_data(PerGemmWorkspace, M, BlockCountK, BlkLen);
+            
+            // TODO: Confirm A stride.
+            std::byte* QuantARowPtr = quant_a_data.QuantData + BlockCountK * BlkLen * row;
+            float* QuantARowScalePtr = quant_a_data.QuantScale + BlockCountK * row;
+            float* QuantARowZeroPointPtr = quant_a_data.QuantZeroPoint + BlockCountK * row;
 
-            const float* ARowPtr = data.A;
-            std::byte* QuantARowPtr = static_cast<std::byte*>(Workspace) + gemm_idx * PerGemmWorkspaceStride;
-            for (size_t m = 0; m < M; ++m) {
-                QuantizeARow(BlkLen, ARowPtr, K, QuantARowPtr);
-
-                ARowPtr += data.lda;
-                QuantARowPtr += QuantAStride;
+            for (size_t m = row; m < M; ++threadsCounts) {
+                QuantizeARow(BlkLen, ARowPtr, K, QuantARowPtr, QuantARowScalePtr, QuantARowZeroPointPtr);
+                ARowPtr += data.lda * threadsCounts;
+                QuantARowPtr += BlockCountK * BlkLen * threadsCounts;
+                QuantARowScalePtr += BlockCountK * threadsCounts;
+                QuantARowZeroPointPtr += BlockCountK * threadsCounts;
             }
         });
     }
