@@ -17,7 +17,7 @@ Abstract:
 
 #include "qnbitgemm.h"
 #include "sqnbitgemm_q8_block.h"
-
+#include <thread>
 #include <cassert>
 
 namespace
@@ -235,10 +235,12 @@ struct PerGemmQuantAWorkspace {
     {
         QuantData = (std::byte*)PerGemmWorkspace;
         QuantScale = (float*)(QuantData + M * BlockCountK * BlkLen);
-        BlockSum = QuantScale + M * BlockCountK;
+        QuantZeroPoint = (float*)(QuantScale + M * BlockCountK * BlkLen);
+        BlockSum = QuantZeroPoint + M * BlockCountK;
     }
     std::byte* QuantData;     // NxBlockCountKxBlkLen
     float* QuantScale;        // NxBlockCountK
+    float* QuantZeroPoint;    // NxBlockCountK
     float* BlockSum;          // NxBlockCountK
     void* PerGemmWorkspace_;  // memory for above data
     size_t M_, BlockCountK_, BlkLen_;
@@ -742,10 +744,10 @@ InitializeWorkspace_CompInt8<float>(
         });
     } else {
         const auto QuantizeARow = GetMlasPlatform().QNBitGemmDispatch->QuantizeARowLUT_CompInt8;
-        size_t threadsCounts = min(std::thread::hardware_concurrency(), M);
-        MlasTrySimpleParallel(ThreadPool, BatchN * threadsCounts, [&](ptrdiff_t gemm_idx) {
-            size_t gemm_idx = gemm_idx / threadsCounts;
-            size_t row = gemm_idx % threadsCounts;
+        size_t threadsCounts = std::min(static_cast<size_t>(std::thread::hardware_concurrency()), M);
+        MlasTrySimpleParallel(ThreadPool, BatchN * threadsCounts, [&](ptrdiff_t tid) {
+            size_t gemm_idx = tid / threadsCounts;
+            size_t row = tid % threadsCounts;
 
             const auto& data = DataParams[gemm_idx];
             const float* ARowPtr = data.A + data.lda * row;
@@ -753,7 +755,7 @@ InitializeWorkspace_CompInt8<float>(
             PerGemmQuantAWorkspace quant_a_data(PerGemmWorkspace, M, BlockCountK, BlkLen);
             
             // TODO: Confirm A stride.
-            std::byte* QuantARowPtr = quant_a_data.QuantData + BlockCountK * BlkLen * row;
+            std::byte* QuantARowPtr = quant_a_data.QuantData + QuantAStride * row;
             float* QuantARowScalePtr = quant_a_data.QuantScale + BlockCountK * row;
             float* QuantARowZeroPointPtr = quant_a_data.QuantZeroPoint + BlockCountK * row;
 
