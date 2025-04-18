@@ -17,7 +17,7 @@ Abstract:
 
 #include "qnbitgemm.h"
 #include "sqnbitgemm_q8_block.h"
-
+#include "sqnbitgemm_bitnet_kernel_avx2.h"
 
 #ifndef INTRINSIC_TYPES_H
 #define INTRINSIC_TYPES_H
@@ -1682,29 +1682,40 @@ Q2BitGemmPerGemmWorkspaceSize(
 
 size_t
 SQ2BitGemmKernel_CompInt8_avx2(
-    size_t /*BlkLen*/,
-    const std::byte* /*QuantA*/,
-    const std::byte* /*QuantBData*/,
-    const float* /*QuantBScale*/,
-    const std::byte* /*QuantBZeroPoint*/,
-    float* /*C*/,
-    size_t /*CountM*/,
-    size_t /*CountN*/,
-    size_t /*CountK*/,
-    size_t /*BlockCountK*/,
-    size_t /*ldc*/,
-    const float* /*Bias*/
+    size_t BlkLen,
+    const std::byte* QuantA,
+    const float* QuantAScale,
+    const float* QuantAZeroPoint,
+    const std::byte* QuantBData,
+    const float* QuantBScale,
+    const std::byte* QuantBZeroPoint,
+    float* C,
+    size_t CountM,
+    size_t CountN,
+    size_t CountK,
+    size_t BlockCountK,
+    size_t ldc,
+    const float* Bias
 )
 {
   // reference SQ4BitGemmKernel_CompInt8_avx2
-//   qgemm_lut_t1_int8_m128_k4096_n1_b2(
-//     QuantBData,
-//     QuantA,
-//     QuantBScale,
-//     LUT_Scales,
-//     LUT_Biases,
-//     C);
+    MLAS_UNREFERENCED_PARAMETER(BlkLen);
+    MLAS_UNREFERENCED_PARAMETER(QuantBZeroPoint);
+    MLAS_UNREFERENCED_PARAMETER(CountM);
+    MLAS_UNREFERENCED_PARAMETER(CountN);
+    MLAS_UNREFERENCED_PARAMETER(CountK);
+    MLAS_UNREFERENCED_PARAMETER(BlockCountK);
+    MLAS_UNREFERENCED_PARAMETER(ldc);
+    MLAS_UNREFERENCED_PARAMETER(Bias);
 
+    qgemm_lut_t1_int8_m128_k4096_n1_b2(
+        (void*)QuantBData,
+        (void*)QuantA,
+        (void*)QuantBScale,
+        (void*)QuantAScale,
+        (void*)QuantAZeroPoint,
+        (void*)C);
+        
     return 0;
 }
 

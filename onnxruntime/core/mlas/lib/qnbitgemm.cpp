@@ -235,7 +235,7 @@ struct PerGemmQuantAWorkspace {
     {
         QuantData = (std::byte*)PerGemmWorkspace;
         QuantScale = (float*)(QuantData + M * BlockCountK * BlkLen);
-        QuantZeroPoint = (float*)(QuantScale + M * BlockCountK * BlkLen);
+        QuantZeroPoint = QuantScale + M * BlockCountK * BlkLen;
         BlockSum = QuantZeroPoint + M * BlockCountK;
     }
     std::byte* QuantData;     // NxBlockCountKxBlkLen
@@ -546,17 +546,80 @@ HQ4BitGemm_CompFp16(
 
 void
 SQ2BitGemm_CompInt8(
-    const size_t /*BlkLen*/,
-    const size_t /*K*/,
-    const MLAS_QNBIT_GEMM_DATA_PARAMS<float>* const /*DataParams*/,
-    void* const /*PerGemmWorkspace*/,
-    const size_t /*RangeStartM*/,
-    const size_t /*RangeCountM*/,
-    const size_t /*RangeStartN*/,
-    const size_t /*RangeCountN*/
+    const size_t BlkLen,
+    const size_t K,
+    const MLAS_QNBIT_GEMM_DATA_PARAMS<float>* const DataParams,
+    void* const PerGemmWorkspace,
+    const size_t RangeStartM,
+    const size_t RangeCountM,
+    const size_t RangeStartN,
+    const size_t RangeCountN
 )
 {
-  // TODO: implement this to call 2bit t-mac kernel
+    PerGemmQuantAWorkspace* const per_gemm_quant_a_workspace = static_cast<PerGemmQuantAWorkspace*>(PerGemmWorkspace);
+    constexpr size_t BlkBitWidth = 2;
+
+    const size_t k_blks = MlasDivRoundup(K, BlkLen);
+
+    const size_t lda = k_blks * (per_gemm_quant_a_workspace->QuantScale ? BlkLen : Q8BlkSize(BlkLen));
+    const size_t ldc = DataParams->ldc;
+    const size_t ldb = k_blks * MlasQNBitBlkDataSizeInBytes(BlkBitWidth, BlkLen);
+    const size_t k_blks_zp_bytes = MlasQNBitZeroPointsForBlksSizeInBytes<BlkBitWidth>(k_blks);
+
+    const std::byte* QuantA = per_gemm_quant_a_workspace->QuantData + RangeStartM * lda;
+    const float* QuantAScale = per_gemm_quant_a_workspace->QuantScale + RangeStartM * k_blks;
+    const float* QuantAZeroPoint = per_gemm_quant_a_workspace->QuantZeroPoint + RangeStartM * k_blks;
+
+    // TODO: why?
+    // assert(RangeStartN % 4 == 0);
+    const std::byte* QuantBData = static_cast<const std::byte*>(DataParams->PackedQuantBData) + RangeStartN * ldb;
+    const float* QuantBScale = DataParams->QuantBScale + RangeStartN * k_blks;
+    const std::byte* QuantBZeroPoint =
+        (DataParams->QuantBZeroPoint == nullptr)
+            ? nullptr
+            : static_cast<const std::byte*>(DataParams->QuantBZeroPoint) + RangeStartN * k_blks_zp_bytes;
+
+    float* C = DataParams->C + RangeStartM * ldc + RangeStartN;
+
+    const float* Bias = (DataParams->Bias == nullptr) ? nullptr : DataParams->Bias + RangeStartN;
+
+    size_t CountN = 1;
+    // In T-MAC we process 1 row of LUT and 128 columns of Activation.
+    for (size_t n = 0; n < RangeCountN; n += CountN) {
+        const std::byte* a_row = QuantA;
+        const std::byte* b_col = QuantBData + n * ldb;
+        const float* b_col_scale = QuantBScale + n * k_blks;
+        const std::byte* b_col_zp =
+            (QuantBZeroPoint == nullptr) ? nullptr : QuantBZeroPoint + n * k_blks_zp_bytes;
+        float* c_blk = C + n;
+        const float* bias = (Bias == nullptr) ? nullptr : Bias + n;
+
+        if (GetMlasPlatform().QNBitGemmDispatch->SQ2BitGemmKernel_CompInt8 != nullptr) {
+            GetMlasPlatform().QNBitGemmDispatch->SQ2BitGemmKernel_CompInt8(
+                BlkLen,
+                a_row,
+                QuantAScale,
+                QuantAZeroPoint,
+                b_col,
+                b_col_scale,
+                b_col_zp,
+                c_blk,
+                RangeCountM,
+                CountN,
+                K,
+                k_blks,
+                ldc,
+                bias
+            );
+
+            if (DataParams->PostProcessor != nullptr) {
+                DataParams->PostProcessor->Process(
+                    DataParams->C, RangeStartM, RangeStartN + n,
+                    RangeCountM, CountN, ldc
+                );
+            }
+        }
+    }
 }
 
 void
@@ -1008,6 +1071,9 @@ MlasQNBitGemmBatch(
             const_cast<MLAS_QNBIT_GEMM_DATA_PARAMS<T>*>(Data)->QuantBBlkSum = packed_quant_b.QuantBBlkSum;
             const_cast<MLAS_QNBIT_GEMM_DATA_PARAMS<T>*>(Data)->QuantBScale = packed_quant_b.PackedQuantBScale;
 
+            PerGemmQuantAWorkspace per_gemm_quant_a_workspace(PerGemmWorkspace, M, BlockCountK, BlkLen);
+            ComputeOperation(BlkLen, K, Data, &per_gemm_quant_a_workspace, RangeStartM, RangeCountM, RangeStartN, RangeCountN);
+        } else if (BlkBitWidth == 2 && ComputeType == SQNBIT_CompInt8 && GetMlasPlatform().QNBitGemmDispatch->SQ2BitGemmPackQuantBData != nullptr) {
             PerGemmQuantAWorkspace per_gemm_quant_a_workspace(PerGemmWorkspace, M, BlockCountK, BlkLen);
             ComputeOperation(BlkLen, K, Data, &per_gemm_quant_a_workspace, RangeStartM, RangeCountM, RangeStartN, RangeCountN);
         } else {

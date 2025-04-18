@@ -351,7 +351,47 @@ struct MLAS_QNBIT_GEMM_DISPATCH {
     );
 
     SQ4BitGemmKernel_CompInt8_Fn* SQ4BitGemmKernel_CompInt8 = nullptr;
-    SQ4BitGemmKernel_CompInt8_Fn* SQ2BitGemmKernel_CompInt8 = nullptr;
+
+    /**
+     * @brief Multiply quantized 8-bit integer matrix A with quantized 2-bit integer matrix B.
+     *        A and B are block quantized and B is column major.
+     *
+     * @param       BlkLen              Number of values in a block.
+     * @param       QuantA              Supplies the quantized A matrix.
+                                        Binary data containing block quantized int8 data and scale values.
+     * @param       QuantAScale         Supplies the quantized A matrix block scale values.
+     * @param       QuantAZeroPoint     Supplies the quantized A matrix block zero point values. Optional.
+     * @param       QuantBData          Supplies the quantized B matrix block data.
+     * @param       QuantBScale         Supplies the quantized B matrix block scale values.
+     * @param       QuantBZeroPoint     Supplies the quantized B matrix block zero point values. Optional.
+     * @param[out]  C                   Supplies the output C matrix.
+     * @param       CountM              Number of rows of A and C to process, an upper bound.
+     * @param       CountN              Number of columns of B and C to process.
+     * @param       CountK              Number of columns of A and rows of B.
+     * @param       BlockCountK         Number of blocks in one row of A and one column of B.
+     * @param       ldc                 Number of elements between adjacent rows of C.
+     * @param       Bias                Bias vector of length N.
+     *
+     * @return                          The number of rows of A and C that were processed, at most CountM.
+     */
+    typedef size_t(SQ2BitGemmKernel_CompInt8_Fn)(
+        size_t BlkLen,
+        const std::byte* QuantA,
+        const float* QuantAScale,
+        const float* QuantAZeroPoint,
+        const std::byte* QuantBData,
+        const float* QuantBScale,
+        const std::byte* QuantBZeroPoint,
+        float* C,
+        size_t CountM,
+        size_t CountN,
+        size_t CountK,
+        size_t BlockCountK,
+        size_t ldc,
+        const float* Bias
+    );
+
+    SQ2BitGemmKernel_CompInt8_Fn* SQ2BitGemmKernel_CompInt8 = nullptr;
 
     /**
      * @brief Block quantize values from one row of matrix A from floats to quantized 8-bit integers.

@@ -32,6 +32,8 @@ size_t
 SQ2BitGemmKernel_CompInt8_avx2(
     size_t BlkLen,
     const std::byte* QuantA,
+    const float* QuantAScale,
+    const float* QuantAZeroPoint,
     const std::byte* QuantBData,
     const float* QuantBScale,
     const std::byte* QuantBZeroPoint,

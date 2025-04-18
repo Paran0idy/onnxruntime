@@ -205,18 +205,20 @@ Q2BitGemmPerGemmWorkspaceSize(
 
 size_t
 SQ2BitGemmKernel_CompInt8_avx2(
-    size_t /*BlkLen*/,
-    const std::byte* /*QuantA*/,
-    const std::byte* /*QuantBData*/,
-    const float* /*QuantBScale*/,
-    const std::byte* /*QuantBZeroPoint*/,
-    float* /*C*/,
-    size_t /*CountM*/,
-    size_t /*CountN*/,
-    size_t /*CountK*/,
-    size_t /*BlockCountK*/,
-    size_t /*ldc*/,
-    const float* /*Bias*/
+    size_t BlkLen,
+    const std::byte* QuantA,
+    const float* QuantAScale,
+    const float* QuantAZeroPoint,
+    const std::byte* QuantBData,
+    const float* QuantBScale,
+    const std::byte* QuantBZeroPoint,
+    float* C,
+    size_t CountM,
+    size_t CountN,
+    size_t CountK,
+    size_t BlockCountK,
+    size_t ldc,
+    const float* Bias
 )
 {
     return 0;
