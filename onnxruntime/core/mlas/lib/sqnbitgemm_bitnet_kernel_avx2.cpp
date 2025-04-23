@@ -530,17 +530,106 @@ Q2BitGemmPackQuantBDataSize(
 }
 
 void SQ2BitGemmPackQuantBData(
-  size_t /*N*/,
-  size_t /*K*/,
-  size_t /*BlkLen*/,
-  MLAS_QNBIT_GEMM_COMPUTE_TYPE /*ComputeType*/,
-  const std::byte* /*QuantBDataBegin*/,
-  std::byte* /*PackedQuantBDataBegin*/,
-  MLAS_THREADPOOL* /*ThreadPool*/
-) 
+    size_t N,                     
+    size_t K,                     
+    size_t BlkLen,                
+    MLAS_QNBIT_GEMM_COMPUTE_TYPE, 
+    const std::byte* QuantBDataBegin,  
+    std::byte* PackedQuantBDataBegin, 
+    MLAS_THREADPOOL* ThreadPool
+)
 {
-  // TODO: need implementation
+    constexpr size_t BlkBitWidth = 2; 
+
+    assert(BlkLen >= 16 && BlkLen % 16 == 0);
+
+    // Calculate block configuration
+    const size_t BlockCountK = MlasDivRoundup(K, BlkLen); 
+    const size_t BlkDataSize = MlasQNBitBlkDataSizeInBytes(BlkBitWidth, BlkLen); 
+    const size_t Iterations = N * BlockCountK; 
+
+    const size_t SubBlkLen = BlkLen;
+    const size_t SubBlkDataSize = SubBlkLen * BlkBitWidth / 8; // Bytes per sub-block
+
+    MlasTrySimpleParallel(
+        ThreadPool, Iterations,
+        [&](ptrdiff_t tid) {
+            // Calculate block coordinates
+            const size_t n = tid / BlockCountK;    // Output channel index
+            const size_t k_blk = tid % BlockCountK; // Block index along K dimension
+
+            // Calculate data offsets for current block
+            const size_t data_offset = n * BlockCountK * BlkDataSize + k_blk * BlkDataSize;
+            const std::byte* QuantBData = QuantBDataBegin + data_offset;
+            std::byte* PackedQuantBData = PackedQuantBDataBegin + data_offset;
+
+            // Process complete block
+            for (size_t kk = 0; kk < BlkLen; kk += SubBlkLen) {
+                // Process 4-byte groups to optimize register usage
+                for (size_t byte_idx = 0; byte_idx < SubBlkDataSize; byte_idx += 4) {
+                    const std::byte* src = QuantBData + byte_idx;
+                    std::byte* dst = PackedQuantBData + byte_idx;
+
+                    // Load 4 consecutive bytes (contains 16 x 2-bit elements)
+                    std::byte src0 = src[0];
+                    std::byte src1 = src[1];
+                    std::byte src2 = src[2];
+                    std::byte src3 = src[3];
+
+                    // Extract 2-bit elements from each byte
+                    auto extract = [](std::byte s) -> std::array<uint8_t, 4> {
+                        uint8_t value = static_cast<uint8_t>(s);
+                        return {
+                            static_cast<uint8_t>(value & 0x03),        // Bits 0-1 (element 0)
+                            static_cast<uint8_t>((value >> 2) & 0x03), // Bits 2-3 (element 1)
+                            static_cast<uint8_t>((value >> 4) & 0x03), // Bits 4-5 (element 2)
+                            static_cast<uint8_t>((value >> 6) & 0x03)  // Bits 6-7 (element 3)
+                        };
+                    };
+
+                    // Decompose source bytes into individual 2-bit elements
+                    auto elems0 = extract(src0);
+                    auto elems1 = extract(src1);
+                    auto elems2 = extract(src2);
+                    auto elems3 = extract(src3);
+
+                    // Reorganize elements for efficient SIMD access pattern:
+                    // dst0 contains element0 from all 4 source bytes (bits 0-7)
+                    // [src0.e0 | src1.e0 << 2 | src2.e0 << 4 | src3.e0 << 6]
+                    std::byte dst0 = static_cast<std::byte>(
+                        elems0[0] | (elems1[0] << 2) | (elems2[0] << 4) | (elems3[0] << 6)
+                    );
+                    
+                    // dst1 contains element1 from all 4 source bytes
+                    std::byte dst1 = static_cast<std::byte>(
+                        elems0[1] | (elems1[1] << 2) | (elems2[1] << 4) | (elems3[1] << 6)
+                    );
+
+                    // dst2 contains element2 from all 4 source bytes  
+                    std::byte dst2 = static_cast<std::byte>(
+                        elems0[2] | (elems1[2] << 2) | (elems2[2] << 4) | (elems3[2] << 6)
+                    );
+
+                    // dst3 contains element3 from all 4 source bytes
+                    std::byte dst3 = static_cast<std::byte>(
+                        elems0[3] | (elems1[3] << 2) | (elems2[3] << 4) | (elems3[3] << 6)
+                    );
+
+                    // Store reorganized bytes
+                    dst[0] = dst0;
+                    dst[1] = dst1;
+                    dst[2] = dst2;
+                    dst[3] = dst3;
+                }
+
+                // Advance pointers to next sub-block
+                QuantBData += SubBlkDataSize;
+                PackedQuantBData += SubBlkDataSize;
+            }
+        }
+    );
 }
+
 
 size_t
 Q2BitGemmPerGemmWorkspaceSize(
@@ -593,34 +682,43 @@ SQ2BitGemmKernel_CompInt8_avx2(
     MLAS_UNREFERENCED_PARAMETER(ldc);
     MLAS_UNREFERENCED_PARAMETER(Bias);
 
-    if (CountM == 128 && CountK == 4096) {
-        SQ2BitGemmKernel_CompInt8_avx2_impl<128, 4096>(
-            (void*)QuantBData,
-            (void*)QuantA,
-            (void*)QuantBScale,
-            (void*)QuantAScale,
-            (void*)QuantAZeroPoint,
-            C);
-    } else if (CountM == 256 && CountK == 4096) {
-        SQ2BitGemmKernel_CompInt8_avx2_impl<256, 4096>(
-            (void*)QuantBData,
-            (void*)QuantA,
-            (void*)QuantBScale,
-            (void*)QuantAScale,
-            (void*)QuantAZeroPoint,
-            C);
-    } else if (CountM == 1024 && CountK == 14436) {
-        SQ2BitGemmKernel_CompInt8_avx2_impl<1024, 14336>(
-            (void*)QuantBData,
-            (void*)QuantA,
-            (void*)QuantBScale,
-            (void*)QuantAScale,
-            (void*)QuantAZeroPoint,
-            C);
-    } else {
-        ORT_ENFORCE(false, "Unsupported shape: CountM=", CountM, ", CountK=", CountK);
+    MLAS_UNREFERENCED_PARAMETER(QuantAZeroPoint);
+    MLAS_UNREFERENCED_PARAMETER(QuantAScale);
+    MLAS_UNREFERENCED_PARAMETER(QuantBScale);
+    MLAS_UNREFERENCED_PARAMETER(QuantBData);
+    MLAS_UNREFERENCED_PARAMETER(QuantA);
+    MLAS_UNREFERENCED_PARAMETER(C);
+    MLAS_UNREFERENCED_PARAMETER(CountM);
+    MLAS_UNREFERENCED_PARAMETER(CountK);
 
-    }
+    // if (CountM == 128 && CountK == 4096) {
+    //     SQ2BitGemmKernel_CompInt8_avx2_impl<128, 4096>(
+    //         (void*)QuantBData,
+    //         (void*)QuantA,
+    //         (void*)QuantBScale,
+    //         (void*)QuantAScale,
+    //         (void*)QuantAZeroPoint,
+    //         C);
+    // } else if (CountM == 256 && CountK == 4096) {
+    //     SQ2BitGemmKernel_CompInt8_avx2_impl<256, 4096>(
+    //         (void*)QuantBData,
+    //         (void*)QuantA,
+    //         (void*)QuantBScale,
+    //         (void*)QuantAScale,
+    //         (void*)QuantAZeroPoint,
+    //         C);
+    // } else if (CountM == 1024 && CountK == 14436) {
+    //     SQ2BitGemmKernel_CompInt8_avx2_impl<1024, 14336>(
+    //         (void*)QuantBData,
+    //         (void*)QuantA,
+    //         (void*)QuantBScale,
+    //         (void*)QuantAScale,
+    //         (void*)QuantAZeroPoint,
+    //         C);
+    // } else {
+    //     ORT_ENFORCE(false, "Unsupported shape: CountM=", CountM, ", CountK=", CountK);
+
+    // }
     return 0;
 }
 

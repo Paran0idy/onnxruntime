@@ -17,7 +17,6 @@ Abstract:
 
 #include "qnbitgemm.h"
 #include "sqnbitgemm_q8_block.h"
-#include <thread>
 #include <cassert>
 
 namespace
@@ -57,7 +56,7 @@ GetQNBitGemmVariant(
             } else if (ComputeType == SQNBIT_CompInt8) {
                 return SQNBitGemmVariant_BitWidth4_CompInt8;
             } else if (ComputeType == HQNBIT_CompInt8) {
-                return HQNBitGemmVariant_BitWidth4_CompInt8;
+                return SQNBitGemmVariant_BitWidth4_CompInt8;
             }
         }
     } else if (BlkBitWidth == 2) {
@@ -544,6 +543,23 @@ HQ4BitGemm_CompFp16(
     }
 }
 
+/**
+ * @brief Process BM(128) X BN matrix multiplication with 2-bit quantized A and B.
+ *
+ * This function performs matrix multiplication for a block of M rows and N columns,
+ * where both A and B are quantized to 2 bits. The function supports bias addition
+ * and optional post-processing. The computation is performed using the provided
+ * quantized data, scale, and zero-point buffers.
+ *
+ * @param BlkLen Block length for quantization.
+ * @param K      The shared dimension of the matrices.
+ * @param DataParams Pointer to the structure containing all GEMM parameters.
+ * @param PerGemmWorkspace Pointer to per-GEMM workspace (quantized A, scale, zero-point, etc.).
+ * @param RangeStartM Starting row index for the current block of A/C.
+ * @param RangeCountM Number of rows to process in the current block.
+ * @param RangeStartN Starting column index for the current block of B/C.
+ * @param RangeCountN Number of columns to process in the current block.
+ */
 void
 SQ2BitGemm_CompInt8(
     const size_t BlkLen,
@@ -556,22 +572,25 @@ SQ2BitGemm_CompInt8(
     const size_t RangeCountN
 )
 {
+    // Cast workspace to the structure holding quantized A and related buffers.
     PerGemmQuantAWorkspace* const per_gemm_quant_a_workspace = static_cast<PerGemmQuantAWorkspace*>(PerGemmWorkspace);
     constexpr size_t BlkBitWidth = 2;
 
+    // Calculate the number of blocks along K.
     const size_t k_blks = MlasDivRoundup(K, BlkLen);
 
+    // Compute strides for A, B, and C.
     const size_t lda = k_blks * (per_gemm_quant_a_workspace->QuantScale ? BlkLen : Q8BlkSize(BlkLen));
     const size_t ldc = DataParams->ldc;
     const size_t ldb = k_blks * MlasQNBitBlkDataSizeInBytes(BlkBitWidth, BlkLen);
     const size_t k_blks_zp_bytes = MlasQNBitZeroPointsForBlksSizeInBytes<BlkBitWidth>(k_blks);
 
+    // Get pointers to quantized A, scale, and zero-point for the current block.
     const std::byte* QuantA = per_gemm_quant_a_workspace->QuantData + RangeStartM * lda;
     const float* QuantAScale = per_gemm_quant_a_workspace->QuantScale + RangeStartM * k_blks;
     const float* QuantAZeroPoint = per_gemm_quant_a_workspace->QuantZeroPoint + RangeStartM * k_blks;
 
-    // TODO: why?
-    // assert(RangeStartN % 4 == 0);
+    // Get pointers to quantized B, scale, and zero-point for the current block.
     const std::byte* QuantBData = static_cast<const std::byte*>(DataParams->PackedQuantBData) + RangeStartN * ldb;
     const float* QuantBScale = DataParams->QuantBScale + RangeStartN * k_blks;
     const std::byte* QuantBZeroPoint =
@@ -579,13 +598,16 @@ SQ2BitGemm_CompInt8(
             ? nullptr
             : static_cast<const std::byte*>(DataParams->QuantBZeroPoint) + RangeStartN * k_blks_zp_bytes;
 
+    // Get pointer to output matrix C for the current block.
     float* C = DataParams->C + RangeStartM * ldc + RangeStartN;
 
+    // Get pointer to bias for the current block, if present.
     const float* Bias = (DataParams->Bias == nullptr) ? nullptr : DataParams->Bias + RangeStartN;
 
+    // Process the block in N dimension, possibly in sub-blocks (CountN).
     size_t CountN = 1;
-    // In T-MAC we process 1 row of LUT and 128 columns of Activation.
     for (size_t n = 0; n < RangeCountN; n += CountN) {
+        // Set up pointers for the current sub-block.
         const std::byte* a_row = QuantA;
         const std::byte* b_col = QuantBData + n * ldb;
         const float* b_col_scale = QuantBScale + n * k_blks;
@@ -594,6 +616,7 @@ SQ2BitGemm_CompInt8(
         float* c_blk = C + n;
         const float* bias = (Bias == nullptr) ? nullptr : Bias + n;
 
+        // Call the platform-specific 2-bit GEMM kernel if available.
         if (GetMlasPlatform().QNBitGemmDispatch->SQ2BitGemmKernel_CompInt8 != nullptr) {
             GetMlasPlatform().QNBitGemmDispatch->SQ2BitGemmKernel_CompInt8(
                 BlkLen,
@@ -612,6 +635,7 @@ SQ2BitGemm_CompInt8(
                 bias
             );
 
+            // Optionally run post-processing (e.g., activation) if provided.
             if (DataParams->PostProcessor != nullptr) {
                 DataParams->PostProcessor->Process(
                     DataParams->C, RangeStartM, RangeStartN + n,
@@ -807,10 +831,9 @@ InitializeWorkspace_CompInt8<float>(
         });
     } else {
         const auto QuantizeARow = GetMlasPlatform().QNBitGemmDispatch->QuantizeARowLUT_CompInt8;
-        size_t threadsCounts = std::min(static_cast<size_t>(std::thread::hardware_concurrency()), M);
-        MlasTrySimpleParallel(ThreadPool, BatchN * threadsCounts, [&](ptrdiff_t tid) {
-            size_t gemm_idx = tid / threadsCounts;
-            size_t row = tid % threadsCounts;
+        MlasTrySimpleParallel(ThreadPool, BatchN * M, [&](ptrdiff_t tid) {
+            size_t gemm_idx = tid / M;
+            size_t row = tid % M;
 
             const auto& data = DataParams[gemm_idx];
             const float* ARowPtr = data.A + data.lda * row;
@@ -821,14 +844,9 @@ InitializeWorkspace_CompInt8<float>(
             std::byte* QuantARowPtr = quant_a_data.QuantData + QuantAStride * row;
             float* QuantARowScalePtr = quant_a_data.QuantScale + BlockCountK * row;
             float* QuantARowZeroPointPtr = quant_a_data.QuantZeroPoint + BlockCountK * row;
-
-            for (size_t m = row; m < M; ++threadsCounts) {
-                QuantizeARow(BlkLen, ARowPtr, K, QuantARowPtr, QuantARowScalePtr, QuantARowZeroPointPtr);
-                ARowPtr += data.lda * threadsCounts;
-                QuantARowPtr += BlockCountK * BlkLen * threadsCounts;
-                QuantARowScalePtr += BlockCountK * threadsCounts;
-                QuantARowZeroPointPtr += BlockCountK * threadsCounts;
-            }
+            
+            // Process only one row of A.
+            QuantizeARow(BlkLen, ARowPtr, K, QuantARowPtr, QuantARowScalePtr, QuantARowZeroPointPtr);
         });
     }
 }
@@ -1074,6 +1092,11 @@ MlasQNBitGemmBatch(
             PerGemmQuantAWorkspace per_gemm_quant_a_workspace(PerGemmWorkspace, M, BlockCountK, BlkLen);
             ComputeOperation(BlkLen, K, Data, &per_gemm_quant_a_workspace, RangeStartM, RangeCountM, RangeStartN, RangeCountN);
         } else if (BlkBitWidth == 2 && ComputeType == SQNBIT_CompInt8 && GetMlasPlatform().QNBitGemmDispatch->SQ2BitGemmPackQuantBData != nullptr) {
+            PackedQuantBDataStruct<T> packed_quant_b(const_cast<void*>(Data->QuantBDataWorkspace), N, BlockCountK, BlkLen);
+            const_cast<MLAS_QNBIT_GEMM_DATA_PARAMS<T>*>(Data)->PackedQuantBData = packed_quant_b.PackedQuantBData;
+            const_cast<MLAS_QNBIT_GEMM_DATA_PARAMS<T>*>(Data)->QuantBBlkSum = packed_quant_b.QuantBBlkSum;
+            const_cast<MLAS_QNBIT_GEMM_DATA_PARAMS<T>*>(Data)->QuantBScale = packed_quant_b.PackedQuantBScale;
+
             PerGemmQuantAWorkspace per_gemm_quant_a_workspace(PerGemmWorkspace, M, BlockCountK, BlkLen);
             ComputeOperation(BlkLen, K, Data, &per_gemm_quant_a_workspace, RangeStartM, RangeCountM, RangeStartN, RangeCountN);
         } else {

@@ -120,7 +120,19 @@ struct MLAS_QNBIT_GEMM_DISPATCH {
 
     Q4BitGemmPackQuantBData_Fn* SQ4BitGemmPackQuantBData = nullptr;
     Q4BitGemmPackQuantBData_Fn* HQ4BitGemmPackQuantBData = nullptr;
-    Q4BitGemmPackQuantBData_Fn* SQ2BitGemmPackQuantBData = nullptr;
+    
+    
+    typedef void(Q2BitGemmPackQuantBData_Fn)(
+        size_t N,
+        size_t K,
+        size_t BlkLen,
+        MLAS_QNBIT_GEMM_COMPUTE_TYPE ComputeType,
+        const std::byte* QuantBDataBegin,
+        std::byte* PackedQuantBDataBegin,
+        MLAS_THREADPOOL* ThreadPool
+    );
+    
+    Q2BitGemmPackQuantBData_Fn* SQ2BitGemmPackQuantBData = nullptr;
 
     typedef void(SQ4BitGemmPackQuantBDataAndSumBlk_Fn)(
         size_t N,
