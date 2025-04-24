@@ -551,14 +551,14 @@ HQ4BitGemm_CompFp16(
  * and optional post-processing. The computation is performed using the provided
  * quantized data, scale, and zero-point buffers.
  *
- * @param BlkLen Block length for quantization.
- * @param K      The shared dimension of the matrices.
- * @param DataParams Pointer to the structure containing all GEMM parameters.
- * @param PerGemmWorkspace Pointer to per-GEMM workspace (quantized A, scale, zero-point, etc.).
- * @param RangeStartM Starting row index for the current block of A/C.
- * @param RangeCountM Number of rows to process in the current block.
- * @param RangeStartN Starting column index for the current block of B/C.
- * @param RangeCountN Number of columns to process in the current block.
+ * @param BlkLen            Block length for quantization.
+ * @param K                 The shared dimension of the matrices.
+ * @param DataParams        Pointer to the structure containing all GEMM parameters.
+ * @param PerGemmWorkspace  Pointer to per-GEMM workspace (quantized A, scale, zero-point, etc.).
+ * @param RangeStartM       Starting row index for the current block of A/C.
+ * @param RangeCountM       Number of rows to process in the current block.
+ * @param RangeStartN       Starting column index for the current block of B/C.
+ * @param RangeCountN       Number of columns to process in the current block.
  */
 void
 SQ2BitGemm_CompInt8(
@@ -604,17 +604,15 @@ SQ2BitGemm_CompInt8(
     // Get pointer to bias for the current block, if present.
     const float* Bias = (DataParams->Bias == nullptr) ? nullptr : DataParams->Bias + RangeStartN;
 
-    // Process the block in N dimension, possibly in sub-blocks (CountN).
-    size_t CountN = 1;
-    for (size_t n = 0; n < RangeCountN; n += CountN) {
+    for (size_t m = 0; m < RangeCountM; m++) {
         // Set up pointers for the current sub-block.
-        const std::byte* a_row = QuantA;
-        const std::byte* b_col = QuantBData + n * ldb;
-        const float* b_col_scale = QuantBScale + n * k_blks;
+        const std::byte* a_row = QuantA + m * lda;
+        const std::byte* b_col = QuantBData;
+        const float* b_col_scale = QuantBScale;
         const std::byte* b_col_zp =
-            (QuantBZeroPoint == nullptr) ? nullptr : QuantBZeroPoint + n * k_blks_zp_bytes;
-        float* c_blk = C + n;
-        const float* bias = (Bias == nullptr) ? nullptr : Bias + n;
+            (QuantBZeroPoint == nullptr) ? nullptr : QuantBZeroPoint;
+        float* c_blk = C + m * ldc;
+        const float* bias = (Bias == nullptr) ? nullptr : Bias + m;
 
         // Call the platform-specific 2-bit GEMM kernel if available.
         if (GetMlasPlatform().QNBitGemmDispatch->SQ2BitGemmKernel_CompInt8 != nullptr) {
@@ -627,8 +625,8 @@ SQ2BitGemm_CompInt8(
                 b_col_scale,
                 b_col_zp,
                 c_blk,
-                RangeCountM,
-                CountN,
+                1,
+                RangeCountN,
                 K,
                 k_blks,
                 ldc,

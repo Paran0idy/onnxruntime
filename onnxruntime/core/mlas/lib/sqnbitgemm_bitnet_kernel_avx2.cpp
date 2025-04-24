@@ -691,34 +691,36 @@ SQ2BitGemmKernel_CompInt8_avx2(
     MLAS_UNREFERENCED_PARAMETER(CountM);
     MLAS_UNREFERENCED_PARAMETER(CountK);
 
-    // if (CountM == 128 && CountK == 4096) {
-    //     SQ2BitGemmKernel_CompInt8_avx2_impl<128, 4096>(
-    //         (void*)QuantBData,
-    //         (void*)QuantA,
-    //         (void*)QuantBScale,
-    //         (void*)QuantAScale,
-    //         (void*)QuantAZeroPoint,
-    //         C);
-    // } else if (CountM == 256 && CountK == 4096) {
-    //     SQ2BitGemmKernel_CompInt8_avx2_impl<256, 4096>(
-    //         (void*)QuantBData,
-    //         (void*)QuantA,
-    //         (void*)QuantBScale,
-    //         (void*)QuantAScale,
-    //         (void*)QuantAZeroPoint,
-    //         C);
-    // } else if (CountM == 1024 && CountK == 14436) {
-    //     SQ2BitGemmKernel_CompInt8_avx2_impl<1024, 14336>(
-    //         (void*)QuantBData,
-    //         (void*)QuantA,
-    //         (void*)QuantBScale,
-    //         (void*)QuantAScale,
-    //         (void*)QuantAZeroPoint,
-    //         C);
-    // } else {
-    //     ORT_ENFORCE(false, "Unsupported shape: CountM=", CountM, ", CountK=", CountK);
+    size_t BlkBitWidth = 2; // 2-bit quantization
 
-    // }
+    if (CountN * BlkBitWidth == 128 && CountK == 4096) {
+        SQ2BitGemmKernel_CompInt8_avx2_impl<128, 4096>(
+            (void*)QuantBData,
+            (void*)QuantA,
+            (void*)QuantBScale,
+            (void*)QuantAScale,
+            (void*)QuantAZeroPoint,
+            C);
+    } else if (CountN * BlkBitWidth == 256 && CountK == 4096) {
+        SQ2BitGemmKernel_CompInt8_avx2_impl<256, 4096>(
+            (void*)QuantBData,
+            (void*)QuantA,
+            (void*)QuantBScale,
+            (void*)QuantAScale,
+            (void*)QuantAZeroPoint,
+            C);
+    } else if (CountN * BlkBitWidth == 1024 && CountK == 14436) {
+        SQ2BitGemmKernel_CompInt8_avx2_impl<1024, 14336>(
+            (void*)QuantBData,
+            (void*)QuantA,
+            (void*)QuantBScale,
+            (void*)QuantAScale,
+            (void*)QuantAZeroPoint,
+            C);
+    } else {
+        ORT_ENFORCE(false, "Unsupported shape: CountN * BlkBitWidth = ", CountN * BlkBitWidth, ", CountK=", CountK);
+
+    }
     return 0;
 }
 
